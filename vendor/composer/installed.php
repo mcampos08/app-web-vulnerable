@@ -3,7 +3,7 @@
         'name' => 'clinica/sistema-vulnerable',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => 'a80e0a80bb5da6dd5a1161534633f0255ed17f99',
+        'reference' => '427077d11b8350ef7266742b35212bc75d277e29',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -13,7 +13,7 @@
         'clinica/sistema-vulnerable' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => 'a80e0a80bb5da6dd5a1161534633f0255ed17f99',
+            'reference' => '427077d11b8350ef7266742b35212bc75d277e29',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
