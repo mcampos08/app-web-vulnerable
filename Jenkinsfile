@@ -2,62 +2,61 @@ pipeline {
     agent any
 
     environment {
-        GITHUB_REPO = 'https://github.com/mcampos08/app-web-vulnerable.git'
+        SYFT_OUTPUT = 'sbom.json'
+        GRYPE_REPORT = 'grype-report.json'
+        GRYPE_SARIF = 'grype-report.sarif'
+        BUILD_SHOULD_FAIL = 'false'
     }
 
     stages {
-        stage('📥 Checkout') {
+        stage('Clonar código') {
             steps {
-                echo '=== CLONANDO REPOSITORIO ==='
-                git branch: 'main', url: "${GITHUB_REPO}"
+                git url: 'https://github.com/mcampos08/app-web-vulnerable.git', branch: 'main'
             }
         }
 
-        stage('📦 Análisis SCA - OWASP Dependency Check') {
+        stage('Instalar dependencias PHP') {
             steps {
-                echo '=== ANALIZANDO src/ CON OWASP (uso correcto de tool) ==='
-                script {
-                    def dcHome = tool name: 'OWASP-Dependency-Check', type: 'org.jenkinsci.plugins.DependencyCheck.tools.DependencyCheckInstallation'
-                    sh """
-                        mkdir -p reports/dependency-check
+                sh 'composer install --no-interaction --prefer-dist'
+            }
+        }
 
-                        ${dcHome}/bin/dependency-check.sh \
-                          --project "owasp-app" \
-                          --scan . \
-                          --format HTML \
-                          --out reports/dependency-check \
-                          --enableRetired \
-                          --data ${WORKSPACE}/.dependency-check-data \
-                          --log reports/dependency-check/owasp-sca.log
+        stage('Generar SBOM con Syft') {
+            steps {
+                sh "syft dir:. -o json > ${SYFT_OUTPUT}"
+            }
+        }
 
-                        echo "✅ Reporte generado en reports/dependency-check"
-                    """
-                }
+        stage('Análisis con Grype') {
+            steps {
+                sh """
+                    set +e
+                    grype sbom:${SYFT_OUTPUT} -o json > ${GRYPE_REPORT}
+                    grype sbom:${SYFT_OUTPUT} -o sarif > ${GRYPE_SARIF}
+                    grype sbom:${SYFT_OUTPUT} -o table --fail-on high
+                    if [ \$? -ne 0 ]; then
+                        echo "❌ Vulnerabilidades altas o críticas encontradas"
+                        echo "BUILD_SHOULD_FAIL=true" > grype.fail
+                    fi
+                """
             }
         }
     }
 
     post {
         always {
-            archiveArtifacts artifacts: 'reports/dependency-check/dependency-check-report.html', onlyIfSuccessful: true
+            archiveArtifacts artifacts: '*.json', fingerprint: true
+            recordIssues(tools: [ sarif(pattern: 'grype-report.sarif') ])
 
-            publishHTML([
-                reportName: 'Reporte OWASP Dependency-Check',
-                reportDir: 'reports/dependency-check',
-                reportFiles: 'dependency-check-report.html',
-                keepAll: true,
-                allowMissing: false,
-                alwaysLinkToLastBuild: true
-            ])
-        }
-
-
-        success {
-            echo '🎉 ANÁLISIS DE DEPENDENCIAS COMPLETADO CON ÉXITO'
-        }
-
-        failure {
-            echo '❌ FALLÓ EL ANÁLISIS DE DEPENDENCIAS - VERIFICAR LOGS'
+            // Revisar si el análisis encontró vulnerabilidades graves
+            script {
+                if (fileExists('grype.fail')) {
+                    currentBuild.result = 'FAILURE'
+                    echo '⚠️ El análisis encontró vulnerabilidades críticas. Build marcado como FAILURE.'
+                } else {
+                    echo '✅ Sin vulnerabilidades críticas detectadas.'
+                }
+            }
         }
     }
 }
