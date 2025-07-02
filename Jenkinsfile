@@ -1,62 +1,135 @@
 pipeline {
     agent any
-
+    
     environment {
-        SYFT_OUTPUT = 'sbom.json'
-        GRYPE_REPORT = 'grype-report.json'
-        GRYPE_SARIF = 'grype-report.sarif'
-        BUILD_SHOULD_FAIL = 'false'
+        VM_STAGING_IP = '192.168.72.128'
+        STAGING_USER = 'clindata'
+        STAGING_PATH = '/var/www/html/clindata'
+        GITHUB_REPO = 'https://github.com/mcampos08/app-web-vulnerable.git'
+        SONARQUBE_SERVER = 'SonarQube-Local'
     }
-
+    
     stages {
-        stage('Clonar código') {
+        stage('🔧 Test Básico') {
             steps {
-                git url: 'https://github.com/mcampos08/app-web-vulnerable.git', branch: 'main'
-            }
-        }
-
-        stage('Instalar dependencias PHP') {
-            steps {
-                sh 'composer install --no-interaction --prefer-dist'
-            }
-        }
-
-        stage('Generar SBOM con Syft') {
-            steps {
-                sh "syft dir:. -o json > ${SYFT_OUTPUT}"
-            }
-        }
-
-        stage('Análisis con Grype') {
-            steps {
-                sh """
-                    set +e
-                    grype sbom:${SYFT_OUTPUT} -o json > ${GRYPE_REPORT}
-                    grype sbom:${SYFT_OUTPUT} -o sarif > ${GRYPE_SARIF}
-                    grype sbom:${SYFT_OUTPUT} -o table --fail-on high
-                    if [ \$? -ne 0 ]; then
-                        echo "❌ Vulnerabilidades altas o críticas encontradas"
-                        echo "BUILD_SHOULD_FAIL=true" > grype.fail
+                echo '=== PRUEBA RÁPIDA DE HERRAMIENTAS ==='
+                
+                // Verificar herramientas básicas
+                sh '''
+                    echo "Java: $(java -version 2>&1 | head -1)"
+                    echo "Git: $(git --version)"
+                    echo "Curl: $(curl --version | head -1)"
+                '''
+                
+                // Verificar SonarQube Scanner
+                script {
+                    try {
+                        def scannerHome = tool 'SonarQubeScanner'
+                        echo "✅ SonarQube Scanner: ${scannerHome}"
+                    } catch (Exception e) {
+                        echo "❌ SonarQube Scanner: ${e.message}"
+                    }
+                }
+                
+                               
+                // Verificar Syft
+                sh '''
+                    if command -v syft &> /dev/null; then
+                        echo "✅ Syft: $(syft version)"
+                    else
+                        echo "❌ Syft no encontrado"
                     fi
-                """
+                '''
             }
         }
-    }
-
-    post {
-        always {
-            archiveArtifacts artifacts: '*.json', fingerprint: true
-            recordIssues(tools: [ sarif(pattern: 'grype-report.sarif') ])
-
-            // Revisar si el análisis encontró vulnerabilidades graves
-            script {
-                if (fileExists('grype.fail')) {
-                    currentBuild.result = 'FAILURE'
-                    echo '⚠️ El análisis encontró vulnerabilidades críticas. Build marcado como FAILURE.'
-                } else {
-                    echo '✅ Sin vulnerabilidades críticas detectadas.'
+        
+        stage('📥 Checkout Test') {
+            steps {
+                echo '=== CLONANDO REPOSITORIO ==='
+                git branch: 'main', url: "${GITHUB_REPO}"
+                
+                sh '''
+                    echo "Commit: $(git log -1 --oneline)"
+                    echo "Archivos: $(ls -la | wc -l) archivos encontrados"
+                    echo "PHP files: $(find . -name "*.php" | wc -l)"
+                '''
+            }
+        }
+        
+        stage('🔍 SonarQube Rápido') {
+            steps {
+                echo '=== PRUEBA RÁPIDA SONARQUBE ==='
+                script {
+                    // Solo verificar conexión
+                    sh '''
+                        echo "Verificando SonarQube..."
+                        curl -s --connect-timeout 5 http://localhost:9000/api/system/status | grep -q "UP" && echo "✅ SonarQube UP" || echo "❌ SonarQube DOWN"
+                    '''
+                    
+                    // Análisis muy básico con timeout
+                    try {
+                        timeout(time: 3, unit: 'MINUTES') {
+                            def scannerHome = tool 'SonarQubeScanner'
+                            withSonarQubeEnv("${SONARQUBE_SERVER}") {
+                                sh """
+                                    ${scannerHome}/bin/sonar-scanner \
+                                        -Dsonar.projectKey=quick-test \
+                                        -Dsonar.projectName='Quick Test' \
+                                        -Dsonar.sources=. \
+                                        -Dsonar.exclusions=**/*.log,**/*.md
+                                """
+                            }
+                        }
+                        echo "✅ SonarQube análisis completado"
+                    } catch (Exception e) {
+                        echo "⚠️ SonarQube timeout o error: ${e.message}"
+                    }
                 }
             }
+        }
+        
+        stage('🔗 SSH Test') {
+            steps {
+                echo '=== PRUEBA SSH ==='
+                script {
+                    try {
+                        sshagent(['staging-ssh-key']) {
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${STAGING_USER}@${VM_STAGING_IP} "
+                                    echo 'SSH OK - $(date)'
+                                    uptime
+                                "
+                            '''
+                        }
+                        echo "✅ SSH funcionando"
+                    } catch (Exception e) {
+                        echo "❌ SSH error: ${e.message}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo '''
+            =================================
+            RESUMEN DE PRUEBA RÁPIDA
+            =================================
+            ✅ = Funcionando correctamente
+            ❌ = Necesita configuración
+            ⚠️ = Funciona pero con warnings
+            
+            Revisar logs para detalles específicos
+            '''
+        }
+        
+        success {
+            echo '🎉 PRUEBA BÁSICA COMPLETADA - LISTO PARA PIPELINE COMPLETO'
+        }
+        
+        failure {
+            echo '🔧 HAY PROBLEMAS DE CONFIGURACIÓN - REVISAR HERRAMIENTAS'
         }
     }
 }
